@@ -32,21 +32,21 @@ const validateCredentials = (credentials) => {
   if (!credentials || typeof credentials !== 'object') {
     throw new Error('인증 정보가 올바르지 않습니다.');
   }
-
+  
   const { email, password } = credentials;
-
+  
   if (!email?.trim()) {
     throw new Error('이메일을 입력해주세요.');
   }
-
+  
   if (!password) {
     throw new Error('비밀번호를 입력해주세요.');
   }
-
+  
   if (typeof email !== 'string' || typeof password !== 'string') {
     throw new Error('입력값의 형식이 올바르지 않습니다.');
   }
-
+  
   return {
     email: email.trim(),
     password: password
@@ -55,9 +55,9 @@ const validateCredentials = (credentials) => {
 
 // 재시도 딜레이 계산
 const getRetryDelay = (retryCount) => {
-  const delay = RETRY_CONFIG.baseDelay * 
-    Math.pow(RETRY_CONFIG.backoffFactor, retryCount) *
-    (1 + Math.random() * 0.1);
+  const delay = RETRY_CONFIG.baseDelay *
+      Math.pow(RETRY_CONFIG.backoffFactor, retryCount) *
+      (1 + Math.random() * 0.1);
   return Math.min(delay, RETRY_CONFIG.maxDelay);
 };
 
@@ -71,34 +71,34 @@ const isRetryableError = (error) => {
 
 // 요청 인터셉터
 api.interceptors.request.use(
-  config => {
-    // 요청 데이터 검증
-    if (!config.data || typeof config.data !== 'object') {
-      config.data = {};
-    }
-
-    // 설정된 데이터가 문자열이면 파싱 시도
-    if (typeof config.data === 'string') {
-      try {
-        config.data = JSON.parse(config.data);
-      } catch (error) {
-        console.error('Request data parsing error:', error);
+    config => {
+      // 요청 데이터 검증
+      if (!config.data || typeof config.data !== 'object') {
         config.data = {};
       }
-    }
-
-    // 인증 토큰 설정
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
-    if (user?.token) {
-      config.headers['x-auth-token'] = user.token;
-      if (user.sessionId) {
-        config.headers['x-session-id'] = user.sessionId;
+      
+      // 설정된 데이터가 문자열이면 파싱 시도
+      if (typeof config.data === 'string') {
+        try {
+          config.data = JSON.parse(config.data);
+        } catch (error) {
+          console.error('Request data parsing error:', error);
+          config.data = {};
+        }
       }
-    }
-
-    return config;
-  },
-  error => Promise.reject(error)
+      
+      // 인증 토큰 설정
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      if (user?.token) {
+        config.headers['x-auth-token'] = user.token;
+        if (user.sessionId) {
+          config.headers['x-session-id'] = user.sessionId;
+        }
+      }
+      
+      return config;
+    },
+    error => Promise.reject(error)
 );
 
 class AuthService {
@@ -107,11 +107,11 @@ class AuthService {
       console.warn('API_URL is not defined in environment variables');
     }
   }
-
+  
   async login(credentials) {
     try {
       const response = await axios.post(`${API_URL}/api/auth/login`, credentials);
-
+      
       if (response.data?.success && response.data?.token) {
         const userData = {
           id: response.data.user._id,
@@ -122,39 +122,39 @@ class AuthService {
           sessionId: response.data.sessionId,
           lastActivity: Date.now()
         };
-
+        
         localStorage.setItem('user', JSON.stringify(userData));
         window.dispatchEvent(new Event('authStateChange'));
         return userData;
       }
-
+      
       throw new Error(response.data?.message || '로그인에 실패했습니다.');
-
+      
     } catch (error) {
       console.error('Login error:', error);
-
+      
       if (error.response?.status === 401) {
         Toast.error('이메일 주소가 없거나 비밀번호가 틀렸습니다.');
         throw new Error('이메일 주소가 없거나 비밀번호가 틀렸습니다.');
       }
-
+      
       if (error.response?.status === 429) {
         Toast.error('너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.');
         throw new Error('너무 많은 로그인 시도가 있었습니다.');
       }
-
+      
       if (!error.response) {
         Toast.error('서버와 통신할 수 없습니다. 잠시 후 다시 시도해주세요.');
         throw new Error('서버와 통신할 수 없습니다.');
       }
-
+      
       const errorMessage = error.response?.data?.message || '로그인 중 오류가 발생했습니다.';
       Toast.error(errorMessage);
       throw new Error(errorMessage);
     }
   }
-
-
+  
+  
   // logout 메소드 수정
   async logout() {
     try {
@@ -165,7 +165,6 @@ class AuthService {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      console.log("??????");
       socketService.disconnect();
       localStorage.removeItem('user');
       // 인증 상태 변경 이벤트 발생
@@ -173,12 +172,12 @@ class AuthService {
       window.location.href = '/';
     }
   }
-
+  
   // register 메소드 수정
   async register(userData) {
     try {
       const response = await api.post('/api/auth/register', userData);
-
+      
       if (response.data?.success && response.data?.token) {
         const userInfo = {
           id: response.data.user._id,
@@ -190,13 +189,13 @@ class AuthService {
           lastActivity: Date.now()
         };
         localStorage.setItem('user', JSON.stringify(userInfo));
-
+        
         // 인증 상태 변경 이벤트 발생
         window.dispatchEvent(new Event('authStateChange'));
-
+        
         return userInfo;
       }
-
+      
       throw new Error(response.data?.message || '회원가입에 실패했습니다.');
     } catch (error) {
       console.error('Registration error:', error);
@@ -210,19 +209,19 @@ class AuthService {
       if (!user?.token) {
         throw new Error('인증 정보가 없습니다.');
       }
-
+      
       const response = await axios.put(
-        `${API_URL}/api/users/profile`,
-        data,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'x-auth-token': user.token,
-            'x-session-id': user.sessionId
+          `${API_URL}/api/users/profile`,
+          data,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'x-auth-token': user.token,
+              'x-session-id': user.sessionId
+            }
           }
-        }
       );
-
+      
       if (response.data?.success) {
         // 현재 사용자 정보 업데이트
         const updatedUser = {
@@ -237,9 +236,9 @@ class AuthService {
         
         return updatedUser;
       }
-
+      
       throw new Error(response.data?.message || '프로필 업데이트에 실패했습니다.');
-
+      
     } catch (error) {
       console.error('Profile update error:', error);
       
@@ -253,47 +252,47 @@ class AuthService {
           throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
         }
       }
-
+      
       throw this._handleError(error);
     }
   }
-
+  
   async changePassword(currentPassword, newPassword) {
     try {
       const user = this.getCurrentUser();
       if (!user?.token) {
         throw new Error('인증 정보가 없습니다.');
       }
-
+      
       const response = await axios.put(
-        `${API_URL}/api/users/profile`,
-        {
-          currentPassword,
-          newPassword
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'x-auth-token': user.token,
-            'x-session-id': user.sessionId
+          `${API_URL}/api/users/profile`,
+          {
+            currentPassword,
+            newPassword
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'x-auth-token': user.token,
+              'x-session-id': user.sessionId
+            }
           }
-        }
       );
-
+      
       if (response.data?.success) {
         return true;
       }
-
+      
       throw new Error(response.data?.message || '비밀번호 변경에 실패했습니다.');
-
+      
     } catch (error) {
       console.error('Password change error:', error);
-
+      
       if (error.response?.status === 401) {
         if (error.response.data?.message?.includes('비밀번호가 일치하지 않습니다')) {
           throw new Error('현재 비밀번호가 일치하지 않습니다.');
         }
-
+        
         try {
           const refreshed = await this.refreshToken();
           if (refreshed) {
@@ -303,16 +302,16 @@ class AuthService {
           throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
         }
       }
-
+      
       throw this._handleError(error);
     }
-  }  
-
+  }
+  
   getCurrentUser() {
     try {
       const userStr = localStorage.getItem('user');
       if (!userStr) return null;
-
+      
       const user = JSON.parse(userStr);
       const SESSION_TIMEOUT = 2 * 60 * 60 * 1000;
       
@@ -320,7 +319,7 @@ class AuthService {
         this.logout();
         return null;
       }
-
+      
       user.lastActivity = Date.now();
       localStorage.setItem('user', JSON.stringify(user));
       return user;
@@ -330,36 +329,36 @@ class AuthService {
       return null;
     }
   }
-
+  
   async verifyToken() {
     try {
       const user = this.getCurrentUser();
       if (!user?.token || !user?.sessionId) {
         throw new Error('No authentication data found');
       }
-
+      
       // 토큰 검증 상태를 로컬 스토리지에 저장
       const lastVerification = localStorage.getItem('lastTokenVerification');
       const verificationInterval = 5 * 60 * 1000; // 5분
-
+      
       // 마지막 검증 후 5분이 지나지 않았다면 추가 검증 스킵
       if (lastVerification && Date.now() - parseInt(lastVerification) < verificationInterval) {
         return true;
       }
-
+      
       const response = await axiosInstance.post('/api/auth/verify-token', {
         headers: {
           'x-auth-token': user.token,
           'x-session-id': user.sessionId
         }
       });
-
+      
       if (response.data.success) {
         // 토큰 검증 시간 업데이트
         localStorage.setItem('lastTokenVerification', Date.now().toString());
         return true;
       }
-
+      
       throw new Error(response.data.message || '토큰 검증에 실패했습니다.');
     } catch (error) {
       if (error.response?.status === 401) {
@@ -380,9 +379,9 @@ class AuthService {
     try {
       const user = this.getCurrentUser();
       if (!user?.token) throw new Error('인증 정보가 없습니다.');
-
+      
       const response = await api.post('/api/auth/refresh-token');
-
+      
       if (response.data.success && response.data.token) {
         const updatedUser = {
           ...user,
@@ -392,14 +391,14 @@ class AuthService {
         localStorage.setItem('user', JSON.stringify(updatedUser));
         return response.data.token;
       }
-
+      
       throw new Error('토큰 갱신에 실패했습니다.');
     } catch (error) {
       console.error('Token refresh error:', error);
       throw this._handleError(error);
     }
   }
-
+  
   async checkServerConnection() {
     try {
       const response = await api.get('/health', {
@@ -413,7 +412,7 @@ class AuthService {
       throw this._handleError(error);
     }
   }
-
+  
   _handleError(error) {
     if (error.isNetworkError) return error;
     
@@ -421,10 +420,10 @@ class AuthService {
       if (!error.response) {
         return new Error('서버와 통신할 수 없습니다. 네트워크 연결을 확인해주세요.');
       }
-
+      
       const { status, data } = error.response;
       const message = data?.message || error.message;
-
+      
       switch (status) {
         case 400:
           return new Error(message || '입력 정보를 확인해주세요.');
@@ -442,7 +441,6 @@ class AuthService {
           return new Error(message || '요청 처리 중 오류가 발생했습니다.');
       }
     }
-
     return error;
   }
 }

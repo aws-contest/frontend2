@@ -1,7 +1,4 @@
 import { io } from 'socket.io-client';
-import { Modal, Alert, Button } from '@goorm-dev/vapor-components';
-import { AlertCircle, Timer, ExternalLink, AlertTriangle } from 'lucide-react';
-import { Toast } from '../components/Toast';
 import authService from './authService';
 
 const CLEANUP_REASONS = {
@@ -25,11 +22,11 @@ class SocketService {
     this.reactionHandlers = new Set();
     this.connected = false;
   }
-
+  
   async handleDuplicateLogin(data) {
     try {
       const { deviceInfo = 'Unknown Device', ipAddress = 'Unknown IP' } = data;
-
+      
       // 전역 이벤트 발생
       const duplicateLoginEvent = new CustomEvent('duplicateLogin', {
         detail: {
@@ -39,7 +36,7 @@ class SocketService {
         }
       });
       window.dispatchEvent(duplicateLoginEvent);
-
+      
       // 10초 후에 강제 로그아웃 처리
       setTimeout(async () => {
         try {
@@ -54,36 +51,36 @@ class SocketService {
           window.location.href = '/';
         }
       }, 10000);
-
+      
     } catch (error) {
       console.error('[Socket] Error handling duplicate login:', error);
       await authService.logout();
       window.location.href = '/?error=session_error';
     }
   }
-
+  
   async connect(options = {}) {
     if (this.connectionPromise) {
       return this.connectionPromise;
     }
-
+    
     if (this.socket?.connected) {
       console.log('[Socket] Already connected');
       return Promise.resolve(this.socket);
     }
-
+    
     this.connectionPromise = new Promise((resolve, reject) => {
       try {
         console.log('[Socket] Starting connection...');
-
+        
         if (this.socket) {
           console.log('[Socket] Cleaning up existing socket before new connection');
           this.cleanup(CLEANUP_REASONS.RECONNECT);
         }
-
+        
         const socketUrl = process.env.NEXT_PUBLIC_API_URL;
         console.log('[Socket] Connecting to:', socketUrl);
-
+        
         this.socket = io(socketUrl, {
           ...options,
           transports: ['websocket', 'polling'],
@@ -94,9 +91,9 @@ class SocketService {
           timeout: 20000,
           forceNew: true
         });
-
+        
         this.setupEventHandlers(resolve, reject);
-
+        
       } catch (error) {
         console.error('[Socket] Setup error:', error);
         this.connectionPromise = null;
@@ -105,10 +102,10 @@ class SocketService {
     }).finally(() => {
       this.connectionPromise = null;
     });
-
+    
     return this.connectionPromise;
   }
-
+  
   setupEventHandlers(resolve, reject) {
     const connectionTimeout = setTimeout(() => {
       if (!this.socket?.connected) {
@@ -116,7 +113,7 @@ class SocketService {
         reject(new Error('Connection timeout'));
       }
     }, 30000);
-
+    
     this.socket.on('connect', () => {
       console.log('[Socket] Connected successfully');
       this.connected = true;
@@ -126,32 +123,32 @@ class SocketService {
       this.startHeartbeat();
       resolve(this.socket);
     });
-
+    
     this.socket.on('disconnect', (reason) => {
       console.log('[Socket] Disconnected:', reason);
       this.connected = false;
       this.cleanup(CLEANUP_REASONS.DISCONNECT);
     });
-
+    
     this.socket.on('connect_error', (error) => {
       console.error('[Socket] Connection error:', error);
       
       if (error.message === 'Invalid session') {
         authService.refreshToken()
-          .then(() => this.reconnect())
-          .catch(() => {
-            authService.logout();
-            reject(error);
-          });
+            .then(() => this.reconnect())
+            .catch(() => {
+              authService.logout();
+              reject(error);
+            });
         return;
       }
-
+      
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         clearTimeout(connectionTimeout);
         reject(error);
       }
     });
-
+    
     this.socket.on('duplicate_login', async (data) => {
       console.log('[Socket] Duplicate login detected:', data);
       if (data.type === 'new_login_attempt') {
@@ -169,12 +166,12 @@ class SocketService {
         window.dispatchEvent(duplicateLoginEvent);
       }
     });
-
+    
     this.socket.on('error', (error) => {
       console.error('[Socket] Socket error:', error);
       this.handleSocketError(error);
     });
-
+    
     this.socket.on('reconnect', (attemptNumber) => {
       console.log(`[Socket] Reconnected after ${attemptNumber} attempts`);
       this.connected = true;
@@ -182,55 +179,55 @@ class SocketService {
       this.isReconnecting = false;
       this.processMessageQueue();
     });
-
+    
     this.socket.on('reconnect_failed', () => {
       console.error('[Socket] Reconnection failed');
       this.cleanup(CLEANUP_REASONS.MANUAL);
       reject(new Error('Reconnection failed'));
     });
-
+    
     this.socket.on('messageReaction', (data) => {
       console.log('[Socket] Message reaction:', data);
       this.reactionHandlers.forEach(handler => handler(data));
     });
   }
-
+  
   cleanup(reason = CLEANUP_REASONS.MANUAL) {
     if (reason === CLEANUP_REASONS.DISCONNECT && this.isReconnecting) {
       return;
     }
-
+    
     console.log(`[Socket] Cleanup started (reason: ${reason})`);
-
+    
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
-
+    
     if (reason !== CLEANUP_REASONS.RECONNECT) {
       this.reactionHandlers.clear();
     }
-
+    
     if (reason !== CLEANUP_REASONS.RECONNECT) {
       this.messageQueue = [];
     }
-
+    
     if (reason === CLEANUP_REASONS.MANUAL && this.socket) {
       console.log("[Socket] Disconnecting socket during cleanup");
       this.socket.disconnect();
       this.socket = null;
     }
-
+    
     if (reason === CLEANUP_REASONS.MANUAL) {
       this.reconnectAttempts = 0;
       this.isReconnecting = false;
       this.connectionPromise = null;
       this.connected = false;
     }
-
+    
     console.log(`[Socket] Cleanup completed (reason: ${reason})`);
   }
-
+  
   disconnect() {
     this.cleanup(CLEANUP_REASONS.MANUAL);
     if (this.socket) {
@@ -238,31 +235,31 @@ class SocketService {
       this.socket = null;
     }
   }
-
+  
   handleConnectionError(error) {
     this.reconnectAttempts++;
     console.error(`Connection error (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}):`, error);
-
+    
     if (error.message.includes('auth')) {
       authService.refreshToken()
-        .then(() => this.reconnect())
-        .catch(() => authService.logout());
+          .then(() => this.reconnect())
+          .catch(() => authService.logout());
       return;
     }
-
+    
     if (error.message.includes('websocket error')) {
       if (this.socket) {
         this.socket.io.opts.transports = ['polling', 'websocket'];
       }
     }
-
+    
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max reconnection attempts reached');
       this.cleanup(CLEANUP_REASONS.MANUAL);
       this.isReconnecting = false;
     }
   }
-
+  
   handleSocketError(error) {
     console.error('Socket error:', error);
     if (error.type === 'TransportError') {
@@ -270,17 +267,17 @@ class SocketService {
     }
     
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('socketError', { 
-        detail: { error } 
+      window.dispatchEvent(new CustomEvent('socketError', {
+        detail: { error }
       }));
     }
   }
-
+  
   startHeartbeat() {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
     }
-
+    
     this.heartbeatInterval = setInterval(() => {
       if (this.socket?.connected) {
         this.socket.emit('ping', null, (error) => {
@@ -296,24 +293,24 @@ class SocketService {
       }
     }, 25000);
   }
-
+  
   getSocket() {
     return this.socket;
   }
-
+  
   queueMessage(event, data) {
     const message = { event, data, timestamp: Date.now() };
     this.messageQueue.push(message);
     console.log(`Message queued: ${event}`, message);
   }
-
+  
   processMessageQueue() {
     const now = Date.now();
     const validMessages = this.messageQueue.filter(msg => now - msg.timestamp < 300000);
-
+    
     let successCount = 0;
     let failureCount = 0;
-
+    
     while (validMessages.length > 0) {
       const message = validMessages.shift();
       try {
@@ -325,14 +322,14 @@ class SocketService {
         console.error(`Error sending queued message (${message.event}):`, error);
       }
     }
-
+    
     if (successCount + failureCount > 0) {
       console.log(`Message queue processed: ${successCount} succeeded, ${failureCount} failed`);
     }
-
+    
     this.messageQueue = validMessages;
   }
-
+  
   async emit(event, data) {
     try {
       if (!this.socket?.connected) {
@@ -344,11 +341,11 @@ class SocketService {
           reject(new Error('Socket is not connected'));
           return;
         }
-
+        
         const timeout = setTimeout(() => {
           reject(new Error('Socket event timeout'));
         }, 10000);
-
+        
         this.socket.emit(event, data, (response) => {
           clearTimeout(timeout);
           if (response?.error) {
@@ -364,7 +361,7 @@ class SocketService {
       throw error;
     }
   }
-
+  
   on(event, callback) {
     if (!this.socket) {
       console.warn('Socket is not initialized. Queuing event handler.');
@@ -377,7 +374,7 @@ class SocketService {
       this.messageHandlers.set('aiMessageChunk', callback);
     }
   }
-
+  
   off(event, callback) {
     if (!this.socket) {
       this.messageHandlers.delete(event);
@@ -389,19 +386,19 @@ class SocketService {
       this.messageHandlers.delete('aiMessageChunk');
     }
   }
-
+  
   async reconnect() {
     if (this.isReconnecting) return;
-
+    
     console.log('Initiating manual reconnection...');
     this.isReconnecting = true;
     this.cleanup(CLEANUP_REASONS.RECONNECT);
-
+    
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
     }
-
+    
     try {
       await new Promise(resolve => setTimeout(resolve, this.retryDelay));
       await this.connect();
@@ -411,25 +408,25 @@ class SocketService {
       throw error;
     }
   }
-
+  
   isConnected() {
     return this.connected && this.socket?.connected;
   }
-
+  
   getConnectionQuality() {
     if (!this.socket?.connected) return 'disconnected';
     if (this.isReconnecting) return 'reconnecting';
     if (this.socket.conn?.transport?.name === 'polling') return 'poor';
     return 'good';
   }
-
+  
   async addReaction(messageId, reaction) {
     try {
       const user = authService.getCurrentUser();
       if (!user) {
         throw new Error('Authentication required');
       }
-
+      
       await this.emit('messageReaction', {
         messageId,
         reaction,
@@ -440,14 +437,14 @@ class SocketService {
       throw error;
     }
   }
-
+  
   async removeReaction(messageId, reaction) {
     try {
       const user = authService.getCurrentUser();
       if (!user) {
         throw new Error('Authentication required');
       }
-
+      
       await this.emit('messageReaction', {
         messageId,
         reaction,
@@ -458,7 +455,7 @@ class SocketService {
       throw error;
     }
   }
-
+  
   onReactionUpdate(handler) {
     if (typeof handler !== 'function') {
       throw new Error('Handler must be a function');
@@ -466,14 +463,14 @@ class SocketService {
     this.reactionHandlers.add(handler);
     return () => this.reactionHandlers.delete(handler);
   }
-
+  
   async toggleReaction(messageId, reaction) {
     try {
       const user = authService.getCurrentUser();
       if (!user) {
         throw new Error('Authentication required');
       }
-
+      
       await this.emit('messageReaction', {
         messageId,
         reaction,
@@ -495,7 +492,7 @@ if (typeof window !== 'undefined') {
       socketService.connect();
     }
   });
-
+  
   window.addEventListener('offline', () => {
     console.log('Network is offline');
     socketService.disconnect();
