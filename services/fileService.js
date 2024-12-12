@@ -308,14 +308,14 @@ class FileService {
     if (!filename) return '';
     
     const baseUrl = process.env.NEXT_PUBLIC_FILE_API_URL || '';
-    const endpoint = forPreview ? 'view' : 'download';
-    return `${baseUrl}/api/files/${endpoint}/${filename}`;
+    const endpoint = forPreview ? '' : '?response-content-disposition=attachment';
+    return `${baseUrl}${filename}${endpoint}`;
   }
   
   getPreviewUrl(file, withAuth = true) {
     if (!file?.filename) return '';
     
-    const baseUrl = `${process.env.NEXT_PUBLIC_FILE_API_URL}/api/files/view/${file.filename}`;
+    const baseUrl = `${process.env.NEXT_PUBLIC_FILE_API_URL}${file.filename}`;
     
     if (!withAuth) return baseUrl;
     
