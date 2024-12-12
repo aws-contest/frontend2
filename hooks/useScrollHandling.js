@@ -1,257 +1,320 @@
-import { useState, useCallback } from 'react';
-import { Toast } from '../components/Toast';
-import fileService from '../services/fileService';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
-export const useMessageHandling = (socketRef, currentUser, router, handleSessionError, messages = []) => {
-  const [message, setMessage] = useState('');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [showMentionList, setShowMentionList] = useState(false);
-  const [mentionFilter, setMentionFilter] = useState('');
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const [filePreview, setFilePreview] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadError, setUploadError] = useState(null);
+export const useScrollHandling = (socketRef, router, messages = []) => {
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  
-  const handleMessageChange = useCallback((e) => {
-    const newValue = e.target.value;
-    setMessage(newValue);
-    
-    const cursorPosition = e.target.selectionStart;
-    const textBeforeCursor = newValue.slice(0, cursorPosition);
-    const atSymbolIndex = textBeforeCursor.lastIndexOf('@');
-    
-    if (atSymbolIndex !== -1) {
-      const mentionText = textBeforeCursor.slice(atSymbolIndex + 1);
-      if (!mentionText.includes(' ')) {
-        setMentionFilter(mentionText.toLowerCase());
-        setShowMentionList(true);
-        setMentionIndex(0);
-        return;
-      }
-    }
-    
-    setShowMentionList(false);
+  const [initialScrollDone, setInitialScrollDone] = useState(false);
+  const [isLoadingPreviousMessages, setIsLoadingPreviousMessages] = useState(false);
+
+  const messagesEndRef = useRef(null);
+  const previousScrollHeightRef = useRef(0);
+  const previousScrollTopRef = useRef(0);
+  const scrollPositionRef = useRef(0);
+  const isLoadingRef = useRef(false);
+  const lastMessageCountRef = useRef(messages?.length || 0);
+  const scrollTimeoutRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
+  const scrollRestorationRef = useRef(null);
+  const loadMoreTriggeredRef = useRef(false);
+
+  const logDebug = useCallback((action, data) => {
+    console.debug(`[ScrollHandling] ${action}:`, {
+      ...data,
+      timestamp: new Date().toISOString()
+    });
   }, []);
-  
-  const handleLoadMore = useCallback(async () => {
-    if (!socketRef.current?.connected) {
-      console.warn('Cannot load messages: Socket not connected');
+
+  const checkScrollPosition = useCallback(() => {
+    if (!messagesEndRef.current) return { isAtBottom: true, isAtTop: false };
+
+    const container = messagesEndRef.current;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+    const isAtBottom = distanceFromBottom < 100;
+    const isAtTop = scrollTop < 30;
+
+    return { isAtBottom, isAtTop, scrollTop, scrollHeight, clientHeight };
+  }, []);
+
+  const scrollToBottom = useCallback((behavior = 'smooth') => {
+    // 과거 메시지 로딩 중에는 스크롤 하단 이동 방지
+    if (isLoadingPreviousMessages) {
       return;
     }
-    
+
+    if (!messagesEndRef.current) return;
+
+    requestAnimationFrame(() => {
+      try {
+        const container = messagesEndRef.current;
+        if (!container) return;
+
+        const { scrollHeight, clientHeight } = container;
+        const maxScrollTop = scrollHeight - clientHeight;
+
+        container.scrollTo({
+          top: maxScrollTop,
+          behavior: behavior === 'auto' ? 'auto' : 'smooth'
+        });
+
+        logDebug('scrollToBottom', {
+          scrollHeight,
+          clientHeight,
+          maxScrollTop,
+          behavior,
+          isLoadingPrevious: isLoadingPreviousMessages
+        });
+      } catch (error) {
+        console.error('Scroll error:', error);
+      }
+    });
+  }, [isLoadingPreviousMessages, logDebug]);
+
+  const tryLoadMoreMessages = useCallback(async () => {  
+    if (!hasMoreMessages || loadingMessages || isLoadingRef.current || loadMoreTriggeredRef.current) {
+      logDebug('loadMore prevented', {
+        hasMoreMessages,
+        loadingMessages,
+        isLoading: isLoadingRef.current,
+        loadMoreTriggered: loadMoreTriggeredRef.current
+      });
+      return;
+    }
+
     try {
-      if (loadingMessages) {
-        console.log('Already loading messages, skipping...');
-        return;
+      if (!socketRef?.current?.connected) {
+        throw new Error('Socket not connected');
       }
       
+      const container = messagesEndRef.current;
+      if (!container) return;
+      
+      // 이전 메시지 로딩 상태 설정
+      setIsLoadingPreviousMessages(true);
+      isLoadingRef.current = true;
+      loadMoreTriggeredRef.current = true;
+      
+      // 현재 스크롤 위치와 높이 저장
+      previousScrollHeightRef.current = container.scrollHeight;
+      previousScrollTopRef.current = container.scrollTop;
+      scrollPositionRef.current = container.scrollTop;
+
       setLoadingMessages(true);
-      const firstMessageTimestamp = messages[0]?.timestamp;
-      
-      console.log('Loading more messages:', {
-        roomId: router?.query?.room,
-        before: firstMessageTimestamp,
-        currentMessageCount: messages.length
-      });
-      
-      // Promise를 반환하도록 수정
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          setLoadingMessages(false);
-          reject(new Error('Message loading timed out'));
-        }, 10000);
-        
+
+      const firstMessage = messages?.[0];
+      if (!firstMessage) {
+        setHasMoreMessages(false);
+        isLoadingRef.current = false;
+        loadMoreTriggeredRef.current = false;
+        setLoadingMessages(false);
+        setIsLoadingPreviousMessages(false);
+        return;
+      }
+
+      // Socket.IO 이벤트 emit 및 응답 대기
+      const responsePromise = new Promise((resolve, reject) => {
         socketRef.current.emit('fetchPreviousMessages', {
           roomId: router?.query?.room,
-          before: firstMessageTimestamp
+          before: firstMessage.timestamp
         });
-        
-        socketRef.current.once('previousMessagesLoaded', (response) => {
-          clearTimeout(timeout);
-          setLoadingMessages(false);
-          resolve(response);
+
+        socketRef.current.once('previousMessagesLoaded', (data) => {
+          resolve(data);
         });
-        
+
         socketRef.current.once('error', (error) => {
-          clearTimeout(timeout);
-          setLoadingMessages(false);
+          setIsLoadingPreviousMessages(false);
           reject(error);
         });
+
+        // 타임아웃 설정
+        setTimeout(() => {
+          setIsLoadingPreviousMessages(false);
+          reject(new Error('Timeout loading messages'));
+        }, 10000);
       });
-      
+
+      await responsePromise;
+
     } catch (error) {
-      console.error('Load more messages error:', error);
-      Toast.error('이전 메시지를 불러오는데 실패했습니다.');
+      console.error('Load more error:', error);
+      setIsLoadingPreviousMessages(false);
+      isLoadingRef.current = false;
+      loadMoreTriggeredRef.current = false;
       setLoadingMessages(false);
-      throw error;
     }
-  }, [socketRef, router?.query?.room, loadingMessages, messages]);
-  
-  const handleMessageSubmit = useCallback(async (messageData) => {
-    if (!socketRef.current?.connected || !currentUser) {
-      console.error('[Chat] Cannot send message: Socket not connected');
-      Toast.error('채팅 서버와 연결이 끊어졌습니다.');
+  }, [
+    hasMoreMessages,
+    loadingMessages,
+    messages,
+    socketRef,
+    router?.query?.room,
+    setLoadingMessages
+  ]);
+
+  const handleScroll = useCallback(() => {
+    console.log('Scroll event triggered'); // 스크롤 이벤트 확인용 로그
+
+    if (!messagesEndRef.current) {
+      console.log('No messagesEndRef');
       return;
     }
-    
-    const roomId = router?.query?.room;
-    if (!roomId) {
-      Toast.error('채팅방 정보를 찾을 수 없습니다.');
-      return;
+
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
     }
-    
-    try {
-      if (messageData.type === 'file') {
-        setUploading(true);
-        setUploadError(null);
-        setUploadProgress(0);
-        
-        const uploadResponse = await fileService.uploadFile(
-            messageData.fileData.file,
-            (progress) => setUploadProgress(progress)
-        );
-        
-        if (!uploadResponse.success) {
-          throw new Error(uploadResponse.message || '파일 업로드에 실패했습니다.');
-        }
-        
-        socketRef.current.emit('chatMessage', {
-          room: roomId,
-          type: 'file',
-          content: messageData.content || '',
-          fileData: {
-            _id: uploadResponse.data.file._id,
-            filename: uploadResponse.data.file.filename,
-            originalname: uploadResponse.data.file.originalname,
-            mimetype: uploadResponse.data.file.mimetype,
-            size: uploadResponse.data.file.size
-          }
-        });
-        
-        setFilePreview(null);
-        setMessage('');
-        setUploading(false);
-        setUploadProgress(0);
-        
-      } else if (messageData.content?.trim()) {
-        socketRef.current.emit('chatMessage', {
-          room: roomId,
-          type: 'text',
-          content: messageData.content.trim()
-        });
-        
-        setMessage('');
-      }
-      
-      setShowEmojiPicker(false);
-      setShowMentionList(false);
-      
-    } catch (error) {
-      console.error('[Chat] Message submit error:', error);
-      
-      if (error.message?.includes('세션') ||
-          error.message?.includes('인증') ||
-          error.message?.includes('토큰')) {
-        await handleSessionError();
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      console.log('Scroll timeout triggered'); // 타임아웃 실행 확인
+
+      const container = messagesEndRef.current;
+      if (!container) {
+        console.log('No container in timeout');
         return;
       }
-      
-      Toast.error(error.message || '메시지 전송 중 오류가 발생했습니다.');
-      if (messageData.type === 'file') {
-        setUploadError(error.message);
-        setUploading(false);
+
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isAtBottom = scrollHeight - (scrollTop + clientHeight) < 100;
+      const isAtTop = scrollTop < 30;
+
+      console.log('Scroll position:', { // 스크롤 위치 확인
+        scrollTop,
+        scrollHeight,
+        clientHeight,
+        isAtTop,
+        isAtBottom
+      });
+
+      setIsNearBottom(isAtBottom);
+
+      if (isAtTop) {
+        console.log('Is at top, checking conditions:', { // 조건 확인
+          hasMoreMessages,
+          loadingMessages,
+          isLoading: isLoadingRef.current,
+          loadMoreTriggered: loadMoreTriggeredRef.current
+        });
+
+        if (hasMoreMessages && !loadingMessages && !isLoadingRef.current && !loadMoreTriggeredRef.current) {
+          console.log('Calling tryLoadMoreMessages'); // 함수 호출 확인
+          tryLoadMoreMessages();
+        }
       }
+    }, 150);
+  }, [hasMoreMessages, loadingMessages, tryLoadMoreMessages, logDebug]);
+  
+  // Handle new messages
+  useEffect(() => {
+    const currentMessageCount = messages?.length || 0;
+    if (currentMessageCount > lastMessageCountRef.current && !isLoadingPreviousMessages) {
+      if (isNearBottom) {
+        scrollToBottom();
+      }
+      lastMessageCountRef.current = currentMessageCount;
     }
-  }, [currentUser, router, handleSessionError, socketRef]);
-  
-  const handleEmojiToggle = useCallback(() => {
-    setShowEmojiPicker(prev => !prev);
-  }, []);
-  
-  const getFilteredParticipants = useCallback((room) => {
-    if (!room?.participants) return [];
-    
-    const allParticipants = [
-      {
-        _id: 'wayneAI',
-        name: 'wayneAI',
-        email: 'ai@wayne.ai',
-        isAI: true
-      },
-      {
-        _id: 'consultingAI',
-        name: 'consultingAI',
-        email: 'ai@consulting.ai',
-        isAI: true
-      },
-      ...room.participants
-    ];
-    
-    return allParticipants.filter(user =>
-        user.name.toLowerCase().includes(mentionFilter) ||
-        user.email.toLowerCase().includes(mentionFilter)
-    );
-  }, [mentionFilter]);
-  
-  const insertMention = useCallback((messageInputRef, user) => {
-    if (!messageInputRef?.current) return;
-    
-    const cursorPosition = messageInputRef.current.selectionStart;
-    const textBeforeCursor = message.slice(0, cursorPosition);
-    const atSymbolIndex = textBeforeCursor.lastIndexOf('@');
-    
-    if (atSymbolIndex !== -1) {
-      const textBeforeAt = message.slice(0, atSymbolIndex);
-      const newMessage =
-          textBeforeAt +
-          `@${user.name} ` +
-          message.slice(cursorPosition);
-      
-      setMessage(newMessage);
-      setShowMentionList(false);
-      
-      setTimeout(() => {
-        const newPosition = atSymbolIndex + user.name.length + 2;
-        messageInputRef.current.focus();
-        messageInputRef.current.setSelectionRange(newPosition, newPosition);
-      }, 0);
+  }, [messages, isNearBottom, scrollToBottom, isLoadingPreviousMessages]);
+
+  // Initial scroll setup
+  useEffect(() => {
+    if (!initialScrollDone && messages?.length > 0 && !isLoadingPreviousMessages) {
+      scrollToBottom('auto');
+      setInitialScrollDone(true);
+      logDebug('initialScroll');
     }
-  }, [message]);
-  
-  const removeFilePreview = useCallback(() => {
-    setFilePreview(null);
-    setUploadError(null);
-    setUploadProgress(0);
+  }, [messages?.length, initialScrollDone, scrollToBottom, isLoadingPreviousMessages, logDebug]);
+
+  // Restore scroll position after loading more messages
+  useEffect(() => {
+    if (!loadingMessages && previousScrollHeightRef.current > 0) {
+      if (scrollRestorationRef.current) {
+        cancelAnimationFrame(scrollRestorationRef.current);
+      }
+
+      scrollRestorationRef.current = requestAnimationFrame(() => {
+        try {
+          const container = messagesEndRef.current;
+          if (!container) return;
+
+          const newScrollHeight = container.scrollHeight;
+          const heightDiff = newScrollHeight - previousScrollHeightRef.current;
+          const newScrollTop = previousScrollTopRef.current + heightDiff;
+          
+          logDebug('scroll restoration', {
+            previousHeight: previousScrollHeightRef.current,
+            newHeight: newScrollHeight,
+            heightDiff,
+            previousScrollTop: previousScrollTopRef.current,
+            newScrollTop,
+            isLoadingPrevious: isLoadingPreviousMessages
+          });
+
+          // isLoadingPreviousMessages가 true일 때만 스크롤 위치 복원
+          if (isLoadingPreviousMessages) {
+            const originalScrollBehavior = container.style.scrollBehavior;
+            container.style.scrollBehavior = 'auto';
+            container.scrollTop = newScrollTop;
+            requestAnimationFrame(() => {
+              container.style.scrollBehavior = originalScrollBehavior;
+            });
+          }
+
+          // 상태 초기화
+          previousScrollHeightRef.current = 0;
+          previousScrollTopRef.current = 0;
+          scrollPositionRef.current = newScrollTop;
+          isLoadingRef.current = false;
+          loadMoreTriggeredRef.current = false;
+          
+          // 모든 작업이 완료된 후 isLoadingPreviousMessages 상태 변경
+          setTimeout(() => {
+            setIsLoadingPreviousMessages(false);
+          }, 100);
+
+        } catch (error) {
+          console.error('Scroll restoration error:', error);
+          isLoadingRef.current = false;
+          loadMoreTriggeredRef.current = false;
+          setIsLoadingPreviousMessages(false);
+        }
+      });
+    }
+  }, [loadingMessages, logDebug]);
+
+  // Cleanup
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+      if (scrollRestorationRef.current) {
+        cancelAnimationFrame(scrollRestorationRef.current);
+      }
+      isLoadingRef.current = false;
+      loadMoreTriggeredRef.current = false;
+      setIsLoadingPreviousMessages(false);
+    };
   }, []);
-  
+
   return {
-    message,
-    showEmojiPicker,
-    showMentionList,
-    mentionFilter,
-    mentionIndex,
-    filePreview,
-    uploading,
-    uploadProgress,
-    uploadError,
+    isNearBottom,
+    hasMoreMessages,
     loadingMessages,
-    setMessage,
-    setShowEmojiPicker,
-    setShowMentionList,
-    setMentionFilter,
-    setMentionIndex,
-    setFilePreview,
+    initialScrollDone,
+    messagesEndRef,
+    scrollToBottom,
+    handleScroll,
+    tryLoadMoreMessages,
+    checkScrollPosition,
+    setHasMoreMessages,
     setLoadingMessages,
-    handleMessageChange,
-    handleMessageSubmit,
-    handleEmojiToggle,
-    handleLoadMore,
-    getFilteredParticipants,
-    insertMention,
-    removeFilePreview
+    setInitialScrollDone,
+    setIsNearBottom,
+    isLoadingPreviousMessages
   };
 };
 
-export default useMessageHandling;
+export default useScrollHandling;
