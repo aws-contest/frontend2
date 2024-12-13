@@ -115,14 +115,29 @@ const FileMessage = ({
       }
       
       const baseUrl = fileService.getFileUrl(msg.file.filename, false);
-      const authenticatedUrl = `${baseUrl}?token=${encodeURIComponent(user.token)}&sessionId=${encodeURIComponent(user.sessionId)}&download=true`;
+      // const authenticatedUrl = `${baseUrl}?token=${encodeURIComponent(user.token)}&sessionId=${encodeURIComponent(user.sessionId)}&download=true`;
+      //
+      // const link = document.createElement('a');
+      // link.href = authenticatedUrl;
+      // link.download = getDecodedFilename(msg.file.originalname);
+      // document.body.appendChild(link);
+      // link.click();
+      // document.body.removeChild(link);
       
+      const response = await fetch(baseUrl);
+      if (!response.ok) {
+        throw new Error('파일 다운로드 실패');
+      }
+      const blob = await response.blob();
+      
+      const blobUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = authenticatedUrl;
+      link.href = blobUrl;
       link.download = getDecodedFilename(msg.file.originalname);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
       
     } catch (error) {
       setError(error.message || '파일 다운로드 중 오류가 발생했습니다.');
