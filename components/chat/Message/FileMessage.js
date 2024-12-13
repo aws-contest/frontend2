@@ -160,9 +160,8 @@ const FileMessage = ({
       }
       
       const baseUrl = fileService.getFileUrl(msg.file.filename, true);
-      const authenticatedUrl = `${baseUrl}?token=${encodeURIComponent(user.token)}&sessionId=${encodeURIComponent(user.sessionId)}`;
       
-      const newWindow = window.open(authenticatedUrl, '_blank');
+      const newWindow = window.open(baseUrl, '_blank');
       if (!newWindow) {
         throw new Error('팝업이 차단되었습니다. 팝업 차단을 해제해주세요.');
       }
